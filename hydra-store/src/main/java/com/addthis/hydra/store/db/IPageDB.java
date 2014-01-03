@@ -22,6 +22,7 @@ import com.addthis.basis.util.ClosableIterator;
 
 import com.addthis.codec.Codec;
 import com.addthis.hydra.store.db.IPageDB.Key;
+import com.addthis.hydra.store.kv.PagedKeyValueStore;
 import com.addthis.hydra.store.util.Raw;
 
 
@@ -55,6 +56,8 @@ public interface IPageDB<K extends Key, V extends Codec.Codable> {
     public Range<K, V> range(K from, K to);
 
     public void close();
+
+    public PagedKeyValueStore<DBKey, V> getEps();
 
     /**
      * Close the source.

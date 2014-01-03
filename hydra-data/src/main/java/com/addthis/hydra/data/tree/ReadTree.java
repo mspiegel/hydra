@@ -484,8 +484,8 @@ public final class ReadTree implements DataTree {
         return getRootNode().getDataMap();
     }
 
-    public ReadExternalPagedStore<DBKey, ReadTreeNode> getEps() {
-        return source.getEps();
+    public ReadExternalPagedStore<DBKey, ReadTreeNode> getReadEps() {
+        return source.getReadEps();
     }
 
 }

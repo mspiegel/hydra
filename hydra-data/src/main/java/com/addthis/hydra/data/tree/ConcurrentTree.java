@@ -45,6 +45,7 @@ import com.addthis.hydra.store.db.DBKey;
 import com.addthis.hydra.store.db.IPageDB;
 import com.addthis.hydra.store.db.IPageDB.Range;
 import com.addthis.hydra.store.db.PageDB;
+import com.addthis.hydra.store.kv.PagedKeyValueStore;
 import com.addthis.hydra.store.skiplist.SkipListCache;
 import com.addthis.hydra.store.util.MeterFileLogger;
 import com.addthis.hydra.store.util.MeterFileLogger.MeterDataSource;
@@ -217,19 +218,20 @@ public final class ConcurrentTree implements DataTree, MeterDataSource {
                 throw new RuntimeException("missing root in readonly tree");
             }
             treeTrashNode = null;
+            deletionThreadPool = null;
         } else {
             treeRootNode = (ConcurrentTreeNode) dummyRoot.getOrCreateEditableNode("root");
             treeTrashNode = (ConcurrentTreeNode) dummyRoot.getOrCreateEditableNode("trash");
             treeTrashNode.requireNodeDB();
-        }
-        deletionThreadPool = Executors.newScheduledThreadPool(numDeletionThreads,
-                new NamedThreadFactory(scope + "-deletion-", true));
+            deletionThreadPool = Executors.newScheduledThreadPool(numDeletionThreads,
+                    new NamedThreadFactory(scope + "-deletion-", true));
 
-        for (int i = 0; i < numDeletionThreads; i++) {
-            deletionThreadPool.scheduleAtFixedRate(new BackgroundDeletionTask(),
-                    i,
-                    deletionThreadSleepMillis,
-                    TimeUnit.MILLISECONDS);
+            for (int i = 0; i < numDeletionThreads; i++) {
+                deletionThreadPool.scheduleAtFixedRate(new BackgroundDeletionTask(),
+                        i,
+                        deletionThreadSleepMillis,
+                        TimeUnit.MILLISECONDS);
+            }
         }
 
         long openTime = System.currentTimeMillis() - start;
@@ -477,6 +479,9 @@ public final class ConcurrentTree implements DataTree, MeterDataSource {
     }
 
     private void shutdownDeletionThreadPool() {
+        if (deletionThreadPool == null)
+            return;
+
         deletionThreadPool.shutdown();
 
         try {
@@ -875,4 +880,10 @@ public final class ConcurrentTree implements DataTree, MeterDataSource {
             }
         }
     }
+
+    public PagedKeyValueStore<DBKey, ConcurrentTreeNode> getEps() {
+        return source.getEps();
+    }
+
+
 }

@@ -27,6 +27,7 @@ import com.addthis.codec.Codec;
 import com.addthis.codec.CodecBin2;
 import com.addthis.hydra.store.kv.ByteStoreBDB;
 import com.addthis.hydra.store.kv.ExternalPagedStore.ByteStore;
+import com.addthis.hydra.store.kv.PagedKeyValueStore;
 import com.addthis.hydra.store.kv.ReadExternalPagedStore;
 
 import org.slf4j.Logger;
@@ -200,8 +201,11 @@ public class ReadPageDB<V extends IReadWeighable & Codec.Codable> implements IPa
         throw new UnsupportedOperationException();
     }
 
-    public ReadExternalPagedStore<DBKey, V> getEps() {
+    public ReadExternalPagedStore<DBKey, V> getReadEps() {
         return eps;
     }
+
+    @Override
+    public PagedKeyValueStore<DBKey, V> getEps() { throw new UnsupportedOperationException(); }
 
 }

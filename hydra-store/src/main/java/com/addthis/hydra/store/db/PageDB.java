@@ -191,6 +191,11 @@ public class PageDB<V extends Codec.Codable> implements IPageDB<DBKey, V> {
         close(false);
     }
 
+    @Override
+    public PagedKeyValueStore<DBKey, V> getEps() {
+        return eps;
+    }
+
     /**
      * Close the source.
      *

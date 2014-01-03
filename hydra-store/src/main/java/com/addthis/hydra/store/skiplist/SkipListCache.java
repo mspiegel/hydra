@@ -2201,4 +2201,36 @@ public class SkipListCache<K, V> implements PagedKeyValueStore<K, V> {
         this.estimateInterval = interval;
     }
 
+    public void testIntegrity() {
+        int counter = 0;
+        byte[] encodedKey = externalStore.firstKey();
+        byte[] encodedPage = externalStore.get(encodedKey);
+        K key = keyCoder.keyDecode(encodedKey);
+        do {
+            Page<K, V> newPage = Page.generateEmptyPage(this, key);
+            byte[] encodedNextKey = externalStore.higherKey(encodedKey);
+            if (encodedNextKey != null) {
+                newPage.decode(encodedPage);
+                K nextKey = keyCoder.keyDecode(encodedNextKey);
+                assert(newPage.nextFirstKey.equals(nextKey));
+                if (!newPage.nextFirstKey.equals(nextKey)) {
+                    int compareTo = compareKeys(newPage.nextFirstKey, nextKey);
+                    char direction = compareTo > 0 ? '>' : '<';
+                    log.warn("On page " + counter + " the firstKey is " +
+                             newPage.firstKey + " the length is " + newPage.size +
+                             " the nextFirstKey is " + newPage.nextFirstKey +
+                    " which is " + direction + " the next page is associated with key " + nextKey);
+                }
+                key = nextKey;
+                encodedPage = externalStore.get(encodedNextKey);
+            }
+            encodedKey = encodedNextKey;
+            counter++;
+            if (counter % 10000 == 0) {
+                log.info("Scanned " + counter + " pages.");
+            }
+        } while (encodedKey != null);
+        log.info("Scanned " + counter + " pages.");
+    }
+
 }
