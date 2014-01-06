@@ -279,9 +279,10 @@ public final class ReadTree implements DataTree {
      * Close the source.
      *
      * @param cleanLog unused in the ReadTree implementation.
+     * @param testIntegrity unused in the ReadTree implementation.
      */
     @Override
-    public void close(boolean cleanLog) {
+    public void close(boolean cleanLog, boolean testIntegrity) {
         close();
     }
 

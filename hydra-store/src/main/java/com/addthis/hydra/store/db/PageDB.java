@@ -188,7 +188,7 @@ public class PageDB<V extends Codec.Codable> implements IPageDB<DBKey, V> {
 
     @Override
     public void close() {
-        close(false);
+        close(false, false);
     }
 
     @Override
@@ -200,9 +200,10 @@ public class PageDB<V extends Codec.Codable> implements IPageDB<DBKey, V> {
      * Close the source.
      *
      * @param cleanLog if true then wait for the BerkeleyDB clean thread to finish.
+     * @param testIntegrity if true then test the integrity of the pageDB. This is a slow operation.
      */
     @Override
-    public void close(boolean cleanLog) {
+    public void close(boolean cleanLog, boolean testIntegrity) {
         try {
             synchronized (openRanges) {
                 if (openRanges.size() > 0) {
@@ -213,7 +214,7 @@ public class PageDB<V extends Codec.Codable> implements IPageDB<DBKey, V> {
                 }
             }
         } finally {
-            eps.close(cleanLog);
+            eps.close(cleanLog, testIntegrity);
         }
     }
 

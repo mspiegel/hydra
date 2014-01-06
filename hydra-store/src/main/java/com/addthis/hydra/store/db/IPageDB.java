@@ -63,8 +63,9 @@ public interface IPageDB<K extends Key, V extends Codec.Codable> {
      * Close the source.
      *
      * @param cleanLog if true then wait for the BerkeleyDB clean thread to finish.
+     * @param testIntegrity if true then test the integrity of the pageDB. This is a slow operation.
      */
-    public void close(boolean cleanLog);
+    public void close(boolean cleanLog, boolean testIntegrity);
 
     public void setCacheSize(final int cachesize);
 

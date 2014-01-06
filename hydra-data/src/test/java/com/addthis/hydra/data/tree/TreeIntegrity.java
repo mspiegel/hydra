@@ -12,8 +12,7 @@ public class TreeIntegrity {
         File root = new File(args[0]);
         try {
             ConcurrentTree tree = new ConcurrentTree(root, true);
-            SkipListCache cache = (SkipListCache) tree.getEps();
-            cache.testIntegrity();
+            tree.testIntegrity();
         } catch(Exception ex) {
             System.err.println(ex);
         }
