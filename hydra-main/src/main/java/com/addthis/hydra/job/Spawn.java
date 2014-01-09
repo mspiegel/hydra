@@ -13,14 +13,6 @@
  */
 package com.addthis.hydra.job;
 
-import static com.addthis.hydra.job.store.SpawnDataStoreKeys.MINION_DEAD_PATH;
-import static com.addthis.hydra.job.store.SpawnDataStoreKeys.MINION_UP_PATH;
-import static com.addthis.hydra.job.store.SpawnDataStoreKeys.SPAWN_BALANCE_PARAM_PATH;
-import static com.addthis.hydra.job.store.SpawnDataStoreKeys.SPAWN_COMMON_ALERT_PATH;
-import static com.addthis.hydra.job.store.SpawnDataStoreKeys.SPAWN_COMMON_COMMAND_PATH;
-import static com.addthis.hydra.job.store.SpawnDataStoreKeys.SPAWN_COMMON_MACRO_PATH;
-import static com.addthis.hydra.job.store.SpawnDataStoreKeys.SPAWN_QUEUE_PATH;
-
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
@@ -66,6 +58,8 @@ import com.addthis.basis.util.JitterClock;
 import com.addthis.basis.util.Parameter;
 import com.addthis.basis.util.Strings;
 
+import com.addthis.bark.ZkClientFactory;
+import com.addthis.bark.ZkHelpers;
 import com.addthis.codec.Codec;
 import com.addthis.codec.CodecJSON;
 import com.addthis.hydra.job.backup.ScheduledBackupType;
@@ -106,14 +100,11 @@ import com.addthis.hydra.query.WebSocketManager;
 import com.addthis.hydra.task.run.TaskExitState;
 import com.addthis.hydra.util.DirectedGraph;
 import com.addthis.hydra.util.SettableGauge;
-import com.addthis.bark.ZkHelpers;
 import com.addthis.maljson.JSONArray;
 import com.addthis.maljson.JSONException;
 import com.addthis.maljson.JSONObject;
-
-import com.addthis.bark.ZkClientFactory;
-import com.addthis.meshy.service.file.FileReference;
 import com.addthis.meshy.MeshyClient;
+import com.addthis.meshy.service.file.FileReference;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
@@ -131,6 +122,14 @@ import org.codehaus.jackson.map.ObjectMapper;
 import org.eclipse.jetty.server.Server;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import static com.addthis.hydra.job.store.SpawnDataStoreKeys.MINION_DEAD_PATH;
+import static com.addthis.hydra.job.store.SpawnDataStoreKeys.MINION_UP_PATH;
+import static com.addthis.hydra.job.store.SpawnDataStoreKeys.SPAWN_BALANCE_PARAM_PATH;
+import static com.addthis.hydra.job.store.SpawnDataStoreKeys.SPAWN_COMMON_ALERT_PATH;
+import static com.addthis.hydra.job.store.SpawnDataStoreKeys.SPAWN_COMMON_COMMAND_PATH;
+import static com.addthis.hydra.job.store.SpawnDataStoreKeys.SPAWN_COMMON_MACRO_PATH;
+import static com.addthis.hydra.job.store.SpawnDataStoreKeys.SPAWN_QUEUE_PATH;
 
 /**
  * manages minions running on remote notes. runs master http server to
@@ -217,6 +216,7 @@ public class Spawn implements Codec.Codable {
     private static final int SWAP_CHORE_TTL = Parameter.intValue("spawn.chore.ttl.swap", 10 * 60 * 1000);
     private static final int TASK_QUEUE_DRAIN_INTERVAL = Parameter.intValue("task.queue.drain.interval", 500);
     private static final boolean ENABLE_JOB_STORE = Parameter.boolValue("job.store.enable", true);
+    private static final boolean ENABLE_JOB_FIXDIRS_ONCOMPLETE = Parameter.boolValue("job.fixdirs.oncomplete", true);
 
 
     private final ConcurrentHashMap<String, HostState> monitored;
@@ -254,7 +254,7 @@ public class Spawn implements Codec.Codable {
     private final Lock jobLock = new ReentrantLock();
     private final AtomicBoolean shuttingDown = new AtomicBoolean(false);
     private final LinkedBlockingQueue<String> jobUpdateQueue = new LinkedBlockingQueue<>();
-    private final SpawnTaskFixer spawnTaskFixer = new SpawnTaskFixer(this);
+    private final SpawnJobFixer spawnJobFixer = new SpawnJobFixer(this);
     private JobAlertRunner jobAlertRunner;
     private JobStore jobStore;
     private SpawnDataStore spawnDataStore;
@@ -1278,11 +1278,12 @@ public class Spawn implements Codec.Codable {
      * For a particular task, ensure all live/replica copies exist where they should
      *
      * @param jobId           The job id to fix
-     * @param node            The task id to fix
+     * @param node            The task id to fix, or -1 to fix all
      * @param ignoreTaskState Whether to ignore the task's state (mostly when recovering from a host failure)
+     * @param idleOnly        Whether to skip errored tasks and only fix idle ones
      * @return A string description
      */
-    public String fixTaskDir(String jobId, int node, boolean ignoreTaskState) {
+    public String fixTaskDir(String jobId, int node, boolean ignoreTaskState, boolean idleOnly) {
         jobLock.lock();
         try {
             Job job = getJob(jobId);
@@ -1292,15 +1293,20 @@ public class Spawn implements Codec.Codable {
             int numChanged = 0;
             List<JobTask> tasks = node < 0 ? job.getCopyOfTasks() : Arrays.asList(job.getTask(node));
             for (JobTask task : tasks) {
-                if (!ignoreTaskState && !(task.getState() == JobTaskState.IDLE || task.getState() == JobTaskState.ERROR)) {
-                    continue; // Skip non-idle tasks.
+                boolean shouldModifyTask = !spawnJobFixer.haveRecentlyFixedTask(task.getJobKey()) &&
+                        (ignoreTaskState || (task.getState() == JobTaskState.IDLE || (!idleOnly && task.getState() == JobTaskState.ERROR)));
+                if (log.isDebugEnabled()) {
+                    log.debug("[fixTaskDir] considering modifying task " + task.getJobKey() + " shouldModifyTask=" + shouldModifyTask);
                 }
-                try {
-                    numChanged += resolveJobTaskDirectoryMatches(job, task, matchTaskToDirectories(task, false)) ? 1 : 0;
-                } catch (Exception ex) {
-                    log.warn("fixTaskDir exception " + ex, ex);
-                    return "fixTaskDir exception (see log for more details): " + ex;
+                if (shouldModifyTask) {
+                    try {
+                        numChanged += resolveJobTaskDirectoryMatches(job, task, matchTaskToDirectories(task, false)) ? 1 : 0;
+                        spawnJobFixer.markTaskRecentlyFixed(task.getJobKey());
+                    } catch (Exception ex) {
+                        log.warn("fixTaskDir exception " + ex, ex);
+                        return "fixTaskDir exception (see log for more details): " + ex;
 
+                    }
                 }
             }
             return "Changed " + numChanged + " tasks";
@@ -1486,8 +1492,7 @@ public class Spawn implements Codec.Codable {
             }
             if (!expectedTaskHosts.contains(host.getHostUuid())) {
                 JobTaskDirectoryMatch.MatchType type = null;
-                boolean isReplica = false;
-                if (host.hasLive(task.getJobKey())) {
+                if (host.hasLive(task.getJobKey()) || host.hasIncompleteReplica(task.getJobKey())) {
                     type = JobTaskDirectoryMatch.MatchType.ORPHAN_LIVE;
                 }
                 if (type != null) {
@@ -2505,7 +2510,7 @@ public class Spawn implements Codec.Codable {
         log.warn("[task.end] " + task.getJobKey() + " exited abnormally with " + exitCode);
         task.incrementErrors();
         try {
-            spawnTaskFixer.fixTask(job, task, exitCode);
+            spawnJobFixer.fixTask(job, task, exitCode);
         } catch (Exception ex) {
             job.errorTask(task, exitCode);
         }
@@ -2539,10 +2544,6 @@ public class Spawn implements Codec.Codable {
         }
     }
 
-    private static String makeFixChoreKey(JobKey jobKey) {
-        return "fixChore" + jobKey;
-    }
-
     private void safeStartJob(String uuid) {
         try {
             startJob(uuid, false);
@@ -2551,6 +2552,12 @@ public class Spawn implements Codec.Codable {
         }
     }
 
+    /**
+     * Perform cleanup tasks once per job completion. Triggered when the last running task transitions to an idle state.
+     * In particular: perform any onComplete/onError triggers, set the end time, and possibly do a fixdirs.
+     * @param job     The job that just finished
+     * @param errored Whether the job ended up in error state
+     */
     private void finishJob(Job job, boolean errored) {
         log.warn("[job.done] " + job.getId() + " :: errored=" + errored + ". callback=" + job.getOnCompleteURL());
         jobsCompletedPerHour.mark();
@@ -2568,6 +2575,10 @@ public class Spawn implements Codec.Codable {
                     }
                 } else {
                     doOnState(job, job.getOnCompleteURL(), "onComplete");
+                    if (ENABLE_JOB_FIXDIRS_ONCOMPLETE && job.getRunCount() > 1) {
+                        // Perform a fixDirs on completion, cleaning up missing replicas/orphans.
+                        fixTaskDir(job.getId(), -1, false, true);
+                    }
                 }
             } else {
                 doOnState(job, job.getOnErrorURL(), "onError");
@@ -2849,7 +2860,6 @@ public class Spawn implements Codec.Codable {
         }
         JSONObject ohost = CodecJSON.encodeJSON(state);
         ohost.put("spawnState", getSpawnStateString(state));
-        ohost.put("replicas", ohost.getJSONArray("replicas").length());
         ohost.put("stopped", ohost.getJSONArray("stopped").length());
         ohost.put("total", state.countTotalLive());
         double score = 0;
@@ -3188,7 +3198,6 @@ public class Spawn implements Codec.Codable {
                 new JobKey(job.getId(), task.getTaskID()),
                 job.getPriority(),
                 job.getCopyOfTasks().size(),
-                new HostCapacity(jobCmd.getReqMEM(), jobCmd.getReqCPU(), jobCmd.getReqIO()),
                 job.getMaxRunTime() != null ? job.getMaxRunTime() * 60000 : 0,
                 job.getRunCount(),
                 expandJob(job),
@@ -3198,9 +3207,8 @@ public class Spawn implements Codec.Codable {
                 job.getDailyBackups(),
                 job.getWeeklyBackups(),
                 job.getMonthlyBackups(),
-                getTaskReplicaTargets(task, task.getAllReplicas()),
-                job.getStomp(),
-                false);
+                getTaskReplicaTargets(task, task.getAllReplicas())
+                );
         kick.setRetries(job.getRetries());
         return kick;
     }
@@ -3283,7 +3291,6 @@ public class Spawn implements Codec.Codable {
                 new JobKey(job.getId(), task.getTaskID()),
                 job.getPriority(),
                 job.getCopyOfTasks().size(),
-                new HostCapacity(jobcmd.getReqMEM(), jobcmd.getReqCPU(), jobcmd.getReqIO()),
                 job.getMaxRunTime() != null ? job.getMaxRunTime() * 60000 : 0,
                 job.getRunCount(),
                 null,
@@ -3293,9 +3300,8 @@ public class Spawn implements Codec.Codable {
                 job.getDailyBackups(),
                 job.getWeeklyBackups(),
                 job.getMonthlyBackups(),
-                getTaskReplicaTargets(task, task.getAllReplicas()),
-                job.getStomp(),
-                false);
+                getTaskReplicaTargets(task, task.getAllReplicas())
+                );
         kick.setRetries(job.getRetries());
 
         // Creating a runnable to expand the job and send kick message outside of the main queue-iteration thread.

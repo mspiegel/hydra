@@ -29,16 +29,16 @@ import org.slf4j.LoggerFactory;
 /**
  * A class in charge of performing common fixes when tasks go into error state.
  */
-public class SpawnTaskFixer {
+public class SpawnJobFixer {
 
-    private static Logger log = LoggerFactory.getLogger(SpawnTaskFixer.class);
+    private static Logger log = LoggerFactory.getLogger(SpawnJobFixer.class);
     private final Spawn spawn;
-    private static final long recentlyFixedTaskTime = Parameter.longValue("spawn.task.fix.time", 60_000);
+    private static final long recentlyFixedTaskTime = Parameter.longValue("spawn.task.fix.time", 20_000);
     private final Cache<JobKey, Boolean> recentlyFixedTaskCache = CacheBuilder.newBuilder().expireAfterWrite(recentlyFixedTaskTime, TimeUnit.MILLISECONDS).build();
 
     private final ImmutableSet<Integer> fixDirErrorCodes = ImmutableSet.copyOf(new Integer[]{JobTaskErrorCode.SWAP_FAILURE, JobTaskErrorCode.EXIT_DIR_ERROR, JobTaskErrorCode.HOST_FAILED});
 
-    public SpawnTaskFixer(Spawn spawn) {
+    public SpawnJobFixer(Spawn spawn) {
         this.spawn = spawn;
     }
 
@@ -49,7 +49,7 @@ public class SpawnTaskFixer {
         }
         if (fixDirErrorCodes.contains(errorCode) && recentlyFixedTaskCache.getIfPresent(task.getJobKey()) == null) {
             log.warn("fixer attempting to fix dirs for task " + task.getJobKey());
-            spawn.fixTaskDir(job.getId(), task.getTaskID(), true);
+            spawn.fixTaskDir(job.getId(), task.getTaskID(), true, false);
             job.setTaskState(task, JobTaskState.IDLE, true);
             recentlyFixedTaskCache.put(task.getJobKey(), true);
             if (errorCode != JobTaskErrorCode.HOST_FAILED) {
@@ -57,6 +57,16 @@ public class SpawnTaskFixer {
             }
         } else {
             job.errorTask(task, errorCode);
+        }
+    }
+
+    public boolean haveRecentlyFixedTask(JobKey jobKey) {
+        return recentlyFixedTaskCache.getIfPresent(jobKey) != null;
+    }
+
+    public void markTaskRecentlyFixed(JobKey jobKey) {
+        if (jobKey != null) {
+            recentlyFixedTaskCache.put(jobKey, true);
         }
     }
 

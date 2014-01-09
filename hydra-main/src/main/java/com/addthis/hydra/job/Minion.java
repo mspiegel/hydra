@@ -270,7 +270,8 @@ public class Minion extends AbstractHandler implements MessageListener, ZkSessio
         this.activeTaskKeys = new HashSet<>();
     }
 
-    private Minion(File rootDir, int port) throws Exception {
+    @VisibleForTesting
+    public Minion(File rootDir, int port) throws Exception {
         this.rootDir = rootDir;
         this.nextPort = minJobPort;
         this.startTime = System.currentTimeMillis();
@@ -446,7 +447,8 @@ public class Minion extends AbstractHandler implements MessageListener, ZkSessio
         return -1;
     }
 
-    private void insertJobKickMessage(CommandTaskKick kick) {
+    @VisibleForTesting
+    public void insertJobKickMessage(CommandTaskKick kick) {
         minionStateLock.lock();
         try {
             for (int i = 0; i < jobQueue.size(); i++) {
@@ -678,30 +680,33 @@ public class Minion extends AbstractHandler implements MessageListener, ZkSessio
         LinkedList<JobKey> running = new LinkedList<>();
         LinkedList<JobKey> replicating = new LinkedList<>();
         LinkedList<JobKey> backingUp = new LinkedList<>();
-        LinkedList<JobKey> stopped = new LinkedList<>();
-        LinkedList<JobKey> replicas = new LinkedList<>();
+        LinkedList<JobKey> stoppedTasks = new LinkedList<>();
         LinkedList<JobKey> incompleteReplicas = new LinkedList<>();
         for (JobTask job : tasks.values()) {
-            status.addJob(job.getJobKey().getJobUuid());
-            if (job.isRunning()) {
-                running.add(job.getJobKey());
-            } else if (job.isReplicating() && job.isProcessRunning(job.replicatePid)) {
-                replicating.add(job.getJobKey());
-            } else if (job.isBackingUp()) {
-                backingUp.add(job.getJobKey());
-            } else if (job.getLiveDir().exists()) {
-                if (job.isComplete()) {
-                    stopped.add(job.getJobKey());
-                } else {
-                    incompleteReplicas.add(job.getJobKey());
+            try {
+                status.addJob(job.getJobKey().getJobUuid());
+                if (job.isRunning()) {
+                    running.add(job.getJobKey());
+                } else if (job.isReplicating() && job.isProcessRunning(job.replicatePid)) {
+                    replicating.add(job.getJobKey());
+                } else if (job.isBackingUp()) {
+                    backingUp.add(job.getJobKey());
+                } else if (job.getLiveDir().exists()) {
+                    if (job.isComplete()) {
+                        stoppedTasks.add(job.getJobKey());
+                    } else {
+                        incompleteReplicas.add(job.getJobKey());
+                    }
                 }
+            } catch (Exception ex) {
+                log.warn("Failed to detect status of job " + job + "; omitting from host state", ex);
             }
+
         }
         status.setRunning(running.toArray(new JobKey[running.size()]));
         status.setReplicating(replicating.toArray(new JobKey[replicating.size()]));
         status.setBackingUp(backingUp.toArray(new JobKey[backingUp.size()]));
-        status.setStopped(stopped.toArray(new JobKey[stopped.size()]));
-        status.setReplicas(replicas.toArray(new JobKey[replicas.size()]));
+        status.setStopped(stoppedTasks.toArray(new JobKey[stoppedTasks.size()]));
         status.setIncompleteReplicas(incompleteReplicas.toArray(new JobKey[incompleteReplicas.size()]));
         LinkedList<JobKey> queued = new LinkedList<JobKey>();
         minionStateLock.lock();
@@ -2296,6 +2301,15 @@ public class Minion extends AbstractHandler implements MessageListener, ZkSessio
             }
             return jobStopped.exists();
         }
+
+        @Override
+        public String toString() {
+            return "JobTask{" +
+                   "id='" + id + '\'' +
+                   ", node=" + node +
+                   ", jobDir=" + jobDir +
+                   '}';
+        }
     }
 
     public static class FileStats {
@@ -2472,13 +2486,12 @@ public class Minion extends AbstractHandler implements MessageListener, ZkSessio
                     boolean terminated = task.isRunning() && task.stopWait(true);
                     task.setDeleted(true);
                     tasks.remove(task.getJobKey().toString());
-                    String taskDirPath = rootDir + "/" + task.getJobKey().getJobUuid() + "/" + task.getJobKey().getNodeNumber();
-                    File taskDirFile = new File(taskDirPath);
-                    if (taskDirFile.exists() && taskDirFile.isDirectory()) {
-                        minionTaskDeleter.submitPathToDelete(taskDirPath);
-                    }
                     log.warn("[task.delete] " + task.getJobKey() + " terminated=" + terminated);
                     writeState();
+                }
+                File taskDirFile = new File(rootDir + "/" + delete.getJobUuid() + (delete.getNodeID() != null ? "/" + delete.getNodeID() : ""));
+                if (taskDirFile.exists() && taskDirFile.isDirectory()) {
+                    minionTaskDeleter.submitPathToDelete(taskDirFile.getAbsolutePath());
                 }
             } finally {
                 minionStateLock.unlock();
@@ -2633,15 +2646,22 @@ public class Minion extends AbstractHandler implements MessageListener, ZkSessio
                 }
                 if (!task.jobDir.exists()) {
                     log.warn("[task.replicate] aborted because there is no directory for " + task.getJobKey() + " yet: " + task.jobDir);
-                } else if (!task.isRunning() && !task.isReplicating()) {
+                } else if (!task.isRunning() && !task.isReplicating() && !task.isBackingUp()) {
                     log.warn("[task.replicate] starting " + replicate.getJobKey());
                     removeJobFromQueue(replicate.getJobKey(), false);
+                    if (!task.isComplete()) {
+                        // Attempt to revert to the latest complete backup, if one can be found
+                        String latestCompleteBackup = task.getBackupByRevision(0, "gold");
+                        if (latestCompleteBackup != null) {
+                            task.promoteBackupToLive(new File(task.getJobDir(), latestCompleteBackup), task.getLiveDir());
+                        }
+                    }
                     try {
                         task.setReplicas(replicate.getReplicas());
                         task.execReplicate(replicate.getChoreWatcherKey(), true, true);
                     } catch (Exception e) {
                         log.warn("[task.replicate] received exception after replicate request for " + task.getJobKey() + ": " + e, e);
-                        }
+                    }
                 } else {
                     log.warn("[task.replicate] skip running " + replicate.getJobKey());
                 }
