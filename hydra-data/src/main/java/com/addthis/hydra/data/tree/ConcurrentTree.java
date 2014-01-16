@@ -463,7 +463,7 @@ public final class ConcurrentTree implements DataTree, MeterDataSource {
 
     @SuppressWarnings("unchecked")
     protected Range<DBKey, ConcurrentTreeNode> fetchNodeRange(int db, String from, String to) {
-        return source.range(new DBKey(db, Raw.get(from)), new DBKey(db, Raw.get(to)));
+        return source.range(new DBKey(db, Raw.get(from)), to == null ? new DBKey(db+1, (Raw)null) : new DBKey(db, Raw.get(to)));
     }
 
     public ConcurrentTreeNode getRootNode() {
@@ -685,6 +685,11 @@ public final class ConcurrentTree implements DataTree, MeterDataSource {
     @Override
     public ClosableIterator<DataTreeNode> getIterator(String begin) {
         return getRootNode().getIterator(begin);
+    }
+
+    @Override
+    public ClosableIterator<DataTreeNode> getIterator(String begin, String end) {
+        return getRootNode().getIterator(begin, end);
     }
 
     @Override

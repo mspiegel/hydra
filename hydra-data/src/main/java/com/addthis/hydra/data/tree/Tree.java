@@ -398,7 +398,7 @@ public final class Tree implements DataTree, MeterDataSource {
 
     @SuppressWarnings("unchecked")
     protected Range fetchNodeRange(int db, String from, String to) {
-        return source.range(new DBKey(db, Raw.get(from)), new DBKey(db, Raw.get(to)));
+        return source.range(new DBKey(db, Raw.get(from)), to == null ? new DBKey(db+1, (Raw)null) : new DBKey(db, Raw.get(to)));
     }
 
     public TreeNode getRootNode() {
@@ -903,6 +903,11 @@ public final class Tree implements DataTree, MeterDataSource {
     @Override
     public ClosableIterator<DataTreeNode> getIterator(String begin) {
         return getRootNode().getIterator(begin);
+    }
+
+    @Override
+    public ClosableIterator<DataTreeNode> getIterator(String from, String to) {
+        return getRootNode().getIterator(from, to);
     }
 
     @Override

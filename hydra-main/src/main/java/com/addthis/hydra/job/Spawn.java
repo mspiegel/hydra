@@ -2394,7 +2394,7 @@ public class Spawn implements Codec.Codable {
                 StatusTaskBackup backup = (StatusTaskBackup) core;
                 job = getJob(backup.getJobUuid());
                 task = getTask(backup.getJobUuid(), backup.getNodeID());
-                if (task != null && task.getState() != JobTaskState.REBALANCE) {
+                if (task != null && task.getState() != JobTaskState.REBALANCE && task.getState() != JobTaskState.MIGRATING) {
                     log.warn("[task.backup] " + job.getId() + "/" + task.getTaskID());
                     job.setTaskState(task, JobTaskState.BACKUP);
                     queueJobTaskUpdateEvent(job);
@@ -3069,6 +3069,9 @@ public class Spawn implements Codec.Codable {
                             if (job == null) {
                                 log.warn("ERROR: missing job for id " + jobid);
                                 continue;
+                            }
+                            if (job.getState() == JobState.IDLE && job.getStartTime() == null && job.getEndTime() == null) {
+                                job.setEndTime(clock);
                             }
                             // check for recurring jobs (that aren't already running)
                             if (job.shouldAutoRekick(clock)) {
