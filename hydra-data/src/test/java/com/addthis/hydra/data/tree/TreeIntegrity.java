@@ -11,7 +11,7 @@ public class TreeIntegrity {
 
         File root = new File(args[0]);
         try {
-            ConcurrentTree tree = new ConcurrentTree(root, true);
+            ConcurrentTree tree = new ConcurrentTree(root, false);
             tree.testIntegrity();
         } catch(Exception ex) {
             System.err.println(ex);
