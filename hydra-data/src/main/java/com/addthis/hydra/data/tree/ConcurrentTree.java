@@ -549,9 +549,11 @@ public final class ConcurrentTree implements DataTree, MeterDataSource {
      * Close the tree.
      *
      * @param cleanLog if true then wait for the BerkeleyDB clean thread to finish.
+     * @param testIntegrity if true then test the integrity of the pageDB. This is a slow operation.
+     * @param repairIntegrity if testIntegrity is true then repair invalid pages.
      */
     @Override
-    public void close(boolean cleanLog, boolean testIntegrity) {
+    public void close(boolean cleanLog, boolean testIntegrity, boolean repairIntegrity) {
         if (!closed.compareAndSet(false, true)) {
             log.trace("already closed");
             return;
@@ -584,7 +586,7 @@ public final class ConcurrentTree implements DataTree, MeterDataSource {
         }
         if (source != null) {
             try {
-                int status = source.close(cleanLog, testIntegrity);
+                int status = source.close(cleanLog, testIntegrity, repairIntegrity);
                 if (status != 0) {
                     Runtime.getRuntime().halt(status);
                 }
@@ -600,7 +602,7 @@ public final class ConcurrentTree implements DataTree, MeterDataSource {
 
     @Override
     public void close() {
-        close(false, false);
+        close(false, false, false);
     }
 
     @Override
@@ -928,7 +930,7 @@ public final class ConcurrentTree implements DataTree, MeterDataSource {
     void testIntegrity() {
         PagedKeyValueStore store = source.getEps();
         if (store instanceof SkipListCache) {
-            ((SkipListCache) store).testIntegrity();
+            ((SkipListCache) store).testIntegrity(false);
         }
     }
 }
