@@ -38,6 +38,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import com.addthis.basis.util.MemoryCounter;
 import com.addthis.basis.util.Parameter;
 
+import com.addthis.hydra.store.db.CloseOperation;
 import com.addthis.hydra.store.kv.ExternalPagedStore.ByteStore;
 import com.addthis.hydra.store.kv.KeyCoder;
 import com.addthis.hydra.store.kv.PagedKeyValueStore;
@@ -1947,20 +1948,19 @@ public class SkipListCache<K, V> implements PagedKeyValueStore<K, V> {
      */
     @Override
     public void close() {
-        doClose(false, false, false, false);
+        doClose(false, false, CloseOperation.NONE);
     }
 
     /**
      * Close the cache.
      *
      * @param cleanLog if true then wait for the BerkeleyDB clean thread to finish.
-     * @param testIntegrity if true then test the integrity of the pageDB. This is a slow operation.
-     * @param repairIntegrity if testIntegrity is true then repair invalid pages.
+     * @param operation optionally test or repair the berkeleyDB.
      * @return status code. A status code of 0 indicates success.
      */
     @Override
-    public int close(boolean cleanLog, boolean testIntegrity, boolean repairIntegrity) {
-        return doClose(cleanLog, false, testIntegrity, repairIntegrity);
+    public int close(boolean cleanLog, CloseOperation operation) {
+        return doClose(cleanLog, false, operation);
     }
 
 
@@ -1972,10 +1972,10 @@ public class SkipListCache<K, V> implements PagedKeyValueStore<K, V> {
      * then perhaps a new method should be introduced instead.
      */
     void waitForShutdown() {
-        doClose(false, true, false, false);
+        doClose(false, true, CloseOperation.NONE);
     }
 
-    private int doClose(boolean cleanLog, boolean wait, boolean testIntegrity, boolean repairIntegrity) {
+    private int doClose(boolean cleanLog, boolean wait, CloseOperation operation) {
         int status = 0;
         if (!shutdownGuard.getAndSet(true)) {
             if (wait) {
@@ -1985,8 +1985,8 @@ public class SkipListCache<K, V> implements PagedKeyValueStore<K, V> {
             shutdownEvictionThreads.set(true);
             waitForEvictionThreads();
             pushAllPagesToDisk();
-            if (testIntegrity) {
-                int failedPages = testIntegrity(repairIntegrity);
+            if (operation != null && operation.testIntegrity()) {
+                int failedPages = testIntegrity(operation.repairIntegrity());
                 status = (failedPages > 0) ? 1 : 0;
             }
             closeExternalStore(cleanLog);

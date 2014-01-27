@@ -42,6 +42,7 @@ import com.addthis.basis.util.Meter;
 import com.addthis.basis.util.Parameter;
 import com.addthis.basis.util.Strings;
 
+import com.addthis.hydra.store.db.CloseOperation;
 import com.addthis.hydra.store.db.DBKey;
 import com.addthis.hydra.store.db.IPageDB;
 import com.addthis.hydra.store.db.IPageDB.Range;
@@ -531,7 +532,7 @@ public final class Tree implements DataTree, MeterDataSource {
     }
 
     public void close() {
-        close(false, false, false);
+        close(false, CloseOperation.NONE);
     }
 
 
@@ -539,11 +540,10 @@ public final class Tree implements DataTree, MeterDataSource {
      * Close the tree.
      *
      * @param cleanLog if true then wait for the BerkeleyDB clean thread to finish.
-     * @param testIntegrity if true then test the integrity of the pageDB. This is a slow operation.
-     * @param repairIntegrity if testIntegrity is true then repair invalid pages.
+     * @param operation optionally test or repair the berkeleyDB.
      */
     @Override
-    public void close(boolean cleanLog, boolean testIntegrity, boolean repairIntegrity) {
+    public void close(boolean cleanLog, CloseOperation operation) {
         if (!closed.compareAndSet(false, true)) {
             log.trace("already closed");
             return;
@@ -575,7 +575,7 @@ public final class Tree implements DataTree, MeterDataSource {
         }
         if (source != null) {
             try {
-                source.close(cleanLog, testIntegrity, repairIntegrity);
+                source.close(cleanLog, operation);
             } catch (Exception ex)  {
                 log.warn("", ex);
             }
