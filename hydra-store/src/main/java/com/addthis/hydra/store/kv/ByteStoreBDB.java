@@ -194,6 +194,10 @@ public class ByteStoreBDB implements ByteStore {
         }
     }
 
+    @Override
+    public byte[] ceilingKey(byte[] key) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public byte[] lowerKey(byte[] key) {

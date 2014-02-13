@@ -1774,7 +1774,12 @@ public class SkipListCache<K, V> implements PagedKeyValueStore<K, V> {
          */
         private boolean moveForward(K targetKey, boolean inclusive) {
             while (true) {
-                byte[] higherKeyEncoded = externalStore.higherKey(keyCoder.keyEncode(page.firstKey));
+                byte[] higherKeyEncoded;
+                if (inclusive) {
+                    higherKeyEncoded = externalStore.ceilingKey(keyCoder.keyEncode(targetKey));
+                } else {
+                    higherKeyEncoded = externalStore.higherKey(keyCoder.keyEncode(targetKey));
+                }
 
                 if (higherKeyEncoded == null) {
                     nextKey = null;
