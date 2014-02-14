@@ -159,12 +159,7 @@ public class ExternalPagedStore<K extends Comparable<K>, V> extends CachedPagedS
         public byte[] lowerKey(byte[] key);
 
         /**
-         * return the least key greater than or equal to 'key' or null if there is no such key
-         */
-        public byte[] ceilingKey(byte[] key);
-
-        /**
-         * return greatest key less than or equal to 'key' or null if there is no such key
+         * return greatest key less than or equal to 'key'
          */
         public byte[] floorKey(byte[] key);
 

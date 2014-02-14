@@ -198,43 +198,6 @@ public class ConcurrentByteStoreBDB implements ByteStore {
     }
 
     @Override
-    public byte[] ceilingKey(byte[] key) {
-        final DatabaseEntry target = new DatabaseEntry(key);
-        final DatabaseEntry dk = new DatabaseEntry(key);
-        Cursor cursor = null;
-
-        /** use partial entry to avoid pulling page data */
-        final DatabaseEntry dvs = new DatabaseEntry();
-        dvs.setPartial(0, 0, true);
-        try {
-            cursor = bdb.openCursor(null, cursorConfig);
-            OperationStatus status = cursor.getSearchKeyRange(dk, dvs, lockMode);
-
-            if (status != opSuccess) {
-                return null;
-            }
-
-            int comparison = -1;
-            while (status == opSuccess && (comparison = bdb.compareKeys(target, dk)) > 0) {
-                status = cursor.getNext(dk, dvs, lockMode);
-            }
-            if (status == opSuccess && comparison <= 0) {
-                byte[] rkey = dk.getData();
-                gets.incrementAndGet();
-                bytesIn.addAndGet(rkey.length);
-                return rkey;
-            }
-            return null;
-        } catch (EnvironmentFailureException e) {
-            throw (e);
-        } finally {
-            if (cursor != null) {
-                cursor.close();
-            }
-        }
-    }
-
-    @Override
     public byte[] lowerKey(byte[] key) {
         final DatabaseEntry target = new DatabaseEntry(key);
         final DatabaseEntry dk = new DatabaseEntry(key);
