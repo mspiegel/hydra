@@ -2183,6 +2183,41 @@ public class SkipListCache<K, V> implements PagedKeyValueStore<K, V> {
         }
     }
 
+    private void repairInvalidKeys(final int counter, Page<K, V> page, final K key, final K nextKey) {
+        boolean pageTransfer = false;
+        Page<K,V> nextPage = Page.generateEmptyPage(this, nextKey);
+        byte[] encodedNextPage = externalStore.get(keyCoder.keyEncode(nextKey));
+        nextPage.decode(encodedNextPage);
+        for(int i = 0, pos = 0; i < page.size; i++, pos++) {
+            K testKey = page.keys.get(i);
+            // if testKey >= nextKey then we need to move the testKey off the current page
+            if (compareKeys(testKey, nextKey) >= 0) {
+                // non-negative value from binary search indicates the key was found on the next page
+                if (binarySearch(nextPage.keys, testKey, comparator) >= 0) {
+                    log.info("Key {} was detected on next page. Deleting from page {}.",
+                            pos, counter);
+                } else {
+                    log.info("Moving key {} on page {}.", pos, counter);
+                    page.fetchValue(i);
+                    V value = page.values.get(i);
+                    putIntoPage(nextPage, testKey, value);
+                    pageTransfer = true;
+                }
+                page.keys.remove(i);
+                page.rawValues.remove(i);
+                page.values.remove(i);
+                page.size--;
+                i--;
+            }
+        }
+        byte[] pageEncoded = page.encode();
+        externalStore.put(keyCoder.keyEncode(key), pageEncoded);
+        if (pageTransfer) {
+            encodedNextPage = nextPage.encode();
+            externalStore.put(keyCoder.keyEncode(nextKey), encodedNextPage);
+        }
+    }
+
     /**
      * Emit a log message that a page has been detected with an incorrect nextFirstKey
      * and the page is not the largest page in the database.
@@ -2203,38 +2238,8 @@ public class SkipListCache<K, V> implements PagedKeyValueStore<K, V> {
                  " which is " + direction + " the next page is associated with key " + nextKey);
         if (repair) {
             log.info("Repairing nextFirstKey on page {}.", counter);
-            boolean pageTransfer = false;
             page.nextFirstKey = nextKey;
-            Page<K,V> nextPage = Page.generateEmptyPage(this, nextKey);
-            byte[] encodedNextPage = externalStore.get(keyCoder.keyEncode(nextKey));
-            nextPage.decode(encodedNextPage);
-            for(int i = 0, pos = 0; i < page.size; i++, pos++) {
-                K testKey = page.keys.get(i);
-                if (compareKeys(testKey, nextKey) >= 0) {
-                    if (binarySearch(nextPage.keys, testKey, comparator) >= 0) {
-                        log.info("Key {} was detected on next page. Deleting from page {}.",
-                                pos, counter);
-                    } else {
-                        log.info("Moving key {} on page {}.", pos, counter);
-                        page.fetchValue(i);
-                        V value = page.values.get(i);
-                        putIntoPage(nextPage, testKey, value);
-                        pageTransfer = true;
-                    }
-                    page.keys.remove(i);
-                    page.rawValues.remove(i);
-                    page.values.remove(i);
-                    page.size--;
-                    i--;
-                }
-            }
-
-            byte[] pageEncoded = page.encode();
-            externalStore.put(keyCoder.keyEncode(key), pageEncoded);
-            if (pageTransfer) {
-                encodedNextPage = nextPage.encode();
-                externalStore.put(keyCoder.keyEncode(nextKey), encodedNextPage);
-            }
+            repairInvalidKeys(counter, page, key, nextKey);
         }
 
     }
@@ -2252,11 +2257,21 @@ public class SkipListCache<K, V> implements PagedKeyValueStore<K, V> {
             if (encodedNextKey != null) {
                 page.decode(encodedPage);
                 K nextKey = keyCoder.keyDecode(encodedNextKey);
+                int numKeys = page.keys.size();
                 if (page.nextFirstKey == null) {
                     missingNextFirstKey(repair, counter, page, key, nextKey);
                     failedPages++;
                 } else if (!page.nextFirstKey.equals(nextKey)) {
                     invalidNextFirstKey(repair, counter, page, key, nextKey);
+                    failedPages++;
+                } else if (numKeys > 0 && compareKeys(page.keys.get(numKeys-1),nextKey) >= 0) {
+                    log.warn("On page " + counter + " the firstKey is " +
+                             page.firstKey + " the largest key is " + page.keys.get(numKeys-1) +
+                             " the next key is " + nextKey +
+                             " which is less than or equal to the largest key.");
+                    if (repair) {
+                        repairInvalidKeys(counter, page, key, nextKey);
+                    }
                     failedPages++;
                 }
                 key = nextKey;
