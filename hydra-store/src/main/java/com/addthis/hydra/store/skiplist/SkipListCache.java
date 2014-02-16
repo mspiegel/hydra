@@ -1405,6 +1405,11 @@ public class SkipListCache<K, V> implements PagedKeyValueStore<K, V> {
      * Otherwise this method should be used.
      */
     Page<K, V> locatePage(K key, LockMode returnMode) {
+        return locatePage(key, returnMode, false);
+    }
+
+
+    private Page<K, V> locatePage(K key, LockMode returnMode, boolean exact) {
         LockMode currentMode = returnMode;
 
         Comparable<? super K> ckey = comparable(key);
@@ -1425,6 +1430,8 @@ public class SkipListCache<K, V> implements PagedKeyValueStore<K, V> {
         }
         while (current.inTransientState());
 
+        boolean pageLoad = false;
+
         while (true) {
             assert (!current.inTransientState());
 
@@ -1439,7 +1446,19 @@ public class SkipListCache<K, V> implements PagedKeyValueStore<K, V> {
             }
 
             if (!current.inTransientState()) {
-                if (current.interval(ckey)) {
+                boolean returnPage = false;
+                if (!exact && current.interval(ckey)) {
+                    returnPage = true;
+                }
+                if (exact) {
+                    if (current.firstKey.equals(ckey)) {
+                        returnPage = true;
+                    } else if (pageLoad) {
+                        current.modeUnlock(currentMode);
+                        return null;
+                    }
+                }
+                if (returnPage) {
                     current.timeStamp = generateTimestamp();
 
                     /**
@@ -1464,6 +1483,7 @@ public class SkipListCache<K, V> implements PagedKeyValueStore<K, V> {
             } else {
                 current.modeUnlock(currentMode);
                 current = loadPage(key, null);
+                pageLoad = true;
             }
 
             currentMode = LockMode.WRITEMODE;
@@ -1784,9 +1804,14 @@ public class SkipListCache<K, V> implements PagedKeyValueStore<K, V> {
 
                 K higherKey = keyCoder.keyDecode(higherKeyEncoded);
 
-                page = unlockAndNull(page, LockMode.READMODE);
+                page.readUnlock();
 
-                Page<K, V> higherPage = locatePage(higherKey, LockMode.READMODE);
+                Page<K, V> higherPage = locatePage(higherKey, LockMode.READMODE, true);
+
+                if (higherPage == null) {
+                    page.readLock();
+                    continue;
+                }
 
                 assert (!higherPage.inTransientState());
                 assert (higherPage.keys != null);
